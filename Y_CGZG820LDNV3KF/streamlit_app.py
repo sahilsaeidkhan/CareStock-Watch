@@ -1,6 +1,5 @@
 # CareStock Watch - Hospital Inventory Management
 # With Smart Alert System
-
 import streamlit as st
 from snowflake.snowpark.context import get_active_session
 import pandas as pd
@@ -36,166 +35,57 @@ elif page == "Inventory":
     st.info("Inventory management features coming soon...")
 
 elif page == "Smart Alerts":
-    st.title("Smart Alert System")
+    st.title("Smart Alerts System")
     
-    # Global threshold settings
-    st.subheader("Configure Smart Alert Thresholds")
+    # Sample alert data
+    alerts_data = {
+        "Item Name": ["Paracetamol", "Insulin", "Antibiotics", "Saline Solution"],
+        "Alert Type": ["Low Stock", "Expiry Alert", "Overstock", "Low Stock"],
+        "Severity": ["High", "Critical", "Medium", "High"],
+        "Current Level": ["15 units", "8 vials", "250 boxes", "20 liters"],
+        "Threshold": ["50 units", "30 vials", "100 boxes", "50 liters"]
+    }
+    
+    smart_alerts_df = pd.DataFrame(alerts_data)
+    
+    # Display metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Alerts", len(smart_alerts_df))
+    with col2:
+        critical_count = len(smart_alerts_df[smart_alerts_df["Severity"] == "Critical"])
+        st.metric("Critical", critical_count)
+    with col3:
+        high_count = len(smart_alerts_df[smart_alerts_df["Severity"] == "High"])
+        st.metric("High Priority", high_count)
+    with col4:
+        low_stock = len(smart_alerts_df[smart_alerts_df["Alert Type"] == "Low Stock"])
+        st.metric("Low Stock", low_stock)
+    
+    st.subheader("Active Alerts")
+    
+    # Filters
     col1, col2 = st.columns(2)
     with col1:
-        global_low_pct = st.slider("Default low stock threshold (%)", 5, 50, 20)
+        severity_filter = st.multiselect("Filter by Severity", options=smart_alerts_df["Severity"].unique(), default=smart_alerts_df["Severity"].unique())
     with col2:
-        global_over_pct = st.slider("Default overstock threshold (% above max)", 0, 200, 50)
+        type_filter = st.multiselect("Filter by Alert Type", options=smart_alerts_df["Alert Type"].unique(), default=smart_alerts_df["Alert Type"].unique())
     
-    # Sample data for demonstration
-    sample_data = pd.DataFrame({
-        "ITEM": ["Insulin", "Bandages", "Syringes", "Oxygen", "Saline"],
-        "CATEGORY": ["Medication", "Supplies", "Supplies", "Equipment", "Medication"],
-        "CURRENT_STOCK": [150, 500, 1200, 45, 200],
-        "REORDER_POINT": [100, 300, 800, 50, 150],
-        "MAX_STOCK": [300, 1000, 2000, 100, 400],
-        "EXPIRY_DATE": ["2025-06-15", "2026-12-31", "2026-03-30", "2025-08-20", "2025-09-10"]
-    })
+    # Apply filters
+    filt = smart_alerts_df[(smart_alerts_df["Severity"].isin(severity_filter)) & (smart_alerts_df["Alert Type"].isin(type_filter))]
     
-    st.subheader("Smart Alert Rules per Item")
+    st.dataframe(filt, use_container_width=True)
     
-    # Editable rules table
-    rules_df = sample_data[["ITEM"]].copy()
-    rules_df["Low_Stock_%"] = global_low_pct
-    rules_df["Overstock_%"] = global_over_pct
-    rules_df["Perishable_Days"] = 30
-    
-    edited_rules = st.data_editor(
-        rules_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="smart_rules_editor"
-    )
-    
-    # Create item_rules dictionary
-    item_rules = {}
-    if edited_rules is not None:
-        for _, row in edited_rules.iterrows():
-            item_rules[row["ITEM"]] = {
-                "low_pct": row["Low_Stock_%"],
-                "over_pct": row["Overstock_%"],
-                "perishable_days": row["Perishable_Days"],
-            }
-    
-    # Smart alerts function
-    def get_smart_alerts(df):
-        alerts = []
-        today = datetime.today().date()
-
-        for _, row in df.iterrows():
-            item = row["ITEM"]
-            current = row["CURRENT_STOCK"]
-            reorder_point = row.get("REORDER_POINT", 0)
-            max_stock = row.get("MAX_STOCK", np.nan)
-            expiry = row.get("EXPIRY_DATE", None)
-
-            rules = item_rules.get(item, {
-                "low_pct": global_low_pct,
-                "over_pct": global_over_pct,
-                "perishable_days": 30,
-            })
-
-            # 1) Low stock percentage threshold
-            if reorder_point and reorder_point > 0:
-                pct_of_reorder = (current / reorder_point) * 100
-                if pct_of_reorder <= rules["low_pct"]:
-                    alerts.append({
-                        "Item": item,
-                        "Type": "Low stock",
-                        "Message": f"{item} at {pct_of_reorder:.1f}% of reorder level",
-                        "Severity": "Critical" if pct_of_reorder <= rules["low_pct"] / 2 else "Warning",
-                        "Created_At": today,
-                    })
-
-            # 2) Overstock warnings
-            if not np.isnan(max_stock) and max_stock > 0:
-                if current > max_stock * (1 + rules["over_pct"] / 100):
-                    alerts.append({
-                        "Item": item,
-                        "Type": "Overstock",
-                        "Message": f"{item} exceeds max by {rules['over_pct']}%",
-                        "Severity": "Info",
-                        "Created_At": today,
-                    })
-
-            # 3) Expiry alerts for perishables
-            if expiry and not pd.isna(expiry):
-                expiry_date = pd.to_datetime(expiry).date()
-                days_left = (expiry_date - today).days
-                if days_left <= rules["perishable_days"]:
-                    alerts.append({
-                        "Item": item,
-                        "Type": "Expiry",
-                        "Message": f"{item} expires in {days_left} days",
-                        "Severity": "Warning" if days_left > 0 else "Critical",
-                        "Created_At": today,
-                    })
-
-        return pd.DataFrame(alerts) if alerts else pd.DataFrame(
-            columns=["Item", "Type", "Message", "Severity", "Created_At"]
-        )
-    
-    # Generate alerts
-    smart_alerts_df = get_smart_alerts(sample_data)
-    
-    # Display alerts summary
-    st.subheader("Current Alerts Summary")
-    if not smart_alerts_df.empty:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            critical_count = len(smart_alerts_df[smart_alerts_df["Severity"] == "Critical"])
-            st.metric("Critical Alerts", critical_count)
-        with col2:
-            warning_count = len(smart_alerts_df[smart_alerts_df["Severity"] == "Warning"])
-            st.metric("Warnings", warning_count)
-        with col3:
-            info_count = len(smart_alerts_df[smart_alerts_df["Severity"] == "Info"])
-            st.metric("Info", info_count)
-    
-    # Alert history with filtering
-    st.subheader("Alert History & Filtering")
-    
-    if not smart_alerts_df.empty:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            severity_filter = st.multiselect(
-                "Filter by Severity",
-                options=sorted(smart_alerts_df["Severity"].unique()),
-                default=list(smart_alerts_df["Severity"].unique()),
-            )
-        
-        with col2:
-            type_filter = st.multiselect(
-                "Filter by Alert Type",
-                options=sorted(smart_alerts_df["Type"].unique()),
-                default=list(smart_alerts_df["Type"].unique()),
-            )
-        
-        # Apply filters
-        filt = (
-            smart_alerts_df["Severity"].isin(severity_filter)
-            & smart_alerts_df["Type"].isin(type_filter)
-        )
-        
-        st.dataframe(
-            smart_alerts_df[filt].sort_values("Created_At", ascending=False),
-            use_container_width=True,
-        )
-    else:
-        st.info("No alerts generated. Adjust thresholds or stock levels to see alerts.")
+    if len(filt) == 0:
+        st.info("No alerts generated yet.")
 
 elif page == "Settings":
     st.title("Settings")
-    st.subheader("Notification Settings")
-    email_alerts = st.checkbox("Enable email alerts", value=True)
-    sms_alerts = st.checkbox("Enable SMS alerts", value=False)
+    st.subheader("Notification Preferences")
+    email_alerts = st.checkbox("Enable Email Alerts")
+    sms_alerts = st.checkbox("Enable SMS Alerts")
     if st.button("Save Settings"):
         st.success("Settings saved successfully!")
 
 st.sidebar.divider()
-st.sidebar.info("CareStock Watch v1.0 - Hospital Inventory Management powered by Snowflake")
+st.sidebar.info("CareStock Watch v1.0 - Hospital Inventory Management System")

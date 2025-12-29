@@ -4,6 +4,7 @@ from snowflake.snowpark.context import get_active_session
 import plotly.express as px
 from datetime import datetime
 import numpy as np
+import json
 
 
 # -------------------------------------------------
@@ -97,6 +98,16 @@ def load_stock_health():
 
 df = load_stock_health()
 
+# Apply user-provided location mapping so UI shows readable names
+if "location_map" in st.session_state and st.session_state.location_map:
+    try:
+        df["LOCATION"] = df["LOCATION"].astype(str).apply(
+            lambda x: st.session_state.location_map.get(x, x)
+        )
+    except Exception:
+        # if mapping fails, continue with original LOCATION values
+        pass
+
 # =================================================
 # SESSION STATE (Settings persistence)
 # =================================================
@@ -112,6 +123,35 @@ if "alert_levels" not in st.session_state:
     st.session_state.alert_levels = ["Critical", "Warning"]
 if "recipients" not in st.session_state:
     st.session_state.recipients = ["Hospital procurement team"]
+
+# -----------------------
+# Location mapping editor
+# -----------------------
+if "location_map" not in st.session_state:
+    # sensible defaults for demo data — override via the editor below
+    st.session_state.location_map = {
+        "A": "Central Medical Store",
+        "B": "District Hospital",
+        "C": "Community Health Centre"
+    }
+
+with st.expander("🔁 Edit location name mappings (optional)"):
+    loc_json = json.dumps(st.session_state.location_map, ensure_ascii=False, indent=2)
+    user_input = st.text_area(
+        "Provide a JSON object mapping raw LOCATION codes to full names:",
+        value=loc_json,
+        height=160
+    )
+    if st.button("Apply location mapping"):
+        try:
+            parsed = json.loads(user_input)
+            if not isinstance(parsed, dict):
+                st.error("Mapping must be a JSON object (dictionary).")
+            else:
+                st.session_state.location_map = parsed
+                st.success("Location mapping updated")
+        except Exception as e:
+            st.error(f"Invalid JSON: {e}")
 
 # =================================================
 # SIDEBAR

@@ -201,6 +201,44 @@ def generate_demo_data(n=100):
         })
     return pd.DataFrame(rows)
 
+
+def generate_targeted_demo(n=100, pct_at_risk=0.2, pct_life_saving=0.15):
+    """Generate demo data that ensures a proportion of at-risk items and life-saving items."""
+    df_local = generate_demo_data(n).copy()
+    life_items = ["Insulin", "Oxygen", "Blood", "Ventilator"]
+
+    num_at_risk = int(n * pct_at_risk)
+    num_life = int(n * pct_life_saving)
+
+    if num_at_risk > 0:
+        idxs = np.random.choice(df_local.index, size=num_at_risk, replace=False)
+        for i in idxs:
+            # Reduce closing stock to create a risk
+            avg = df_local.at[i, "AVG_DAILY_DEMAND"]
+            df_local.at[i, "CLOSING_STOCK"] = max(0, int(max(1, avg) * np.random.uniform(0, 4)))
+            df_local.at[i, "DAYS_TO_STOCKOUT"] = round(df_local.at[i, "CLOSING_STOCK"] / max(df_local.at[i, "AVG_DAILY_DEMAND"], 1), 1)
+            df_local.at[i, "STOCK_STATUS"] = "Critical" if df_local.at[i, "DAYS_TO_STOCKOUT"] <= 5 else "Warning"
+
+    if num_life > 0:
+        idxs2 = np.random.choice(df_local.index, size=num_life, replace=False)
+        for i in idxs2:
+            df_local.at[i, "ITEM"] = np.random.choice(life_items)
+            df_local.at[i, "CLOSING_STOCK"] = max(0, int(max(1, df_local.at[i, "AVG_DAILY_DEMAND"]) * np.random.uniform(0, 4)))
+            df_local.at[i, "DAYS_TO_STOCKOUT"] = round(df_local.at[i, "CLOSING_STOCK"] / max(df_local.at[i, "AVG_DAILY_DEMAND"], 1), 1)
+            df_local.at[i, "STOCK_STATUS"] = "Critical" if df_local.at[i, "DAYS_TO_STOCKOUT"] <= 5 else "Warning"
+
+    # Normalize dtypes to avoid warnings when inserting into existing dataframe
+    if "CLOSING_STOCK" in df_local.columns:
+        df_local["CLOSING_STOCK"] = df_local["CLOSING_STOCK"].astype(int)
+    if "AVG_DAILY_DEMAND" in df_local.columns:
+        df_local["AVG_DAILY_DEMAND"] = df_local["AVG_DAILY_DEMAND"].astype(float)
+    if "DAYS_TO_STOCKOUT" in df_local.columns:
+        df_local["DAYS_TO_STOCKOUT"] = df_local["DAYS_TO_STOCKOUT"].astype(float)
+    if "LEAD_TIME_DAYS" in df_local.columns:
+        df_local["LEAD_TIME_DAYS"] = df_local["LEAD_TIME_DAYS"].astype(int)
+
+    return df_local
+
 # Apply user-provided location mapping so UI shows readable names
 if "location_map" in st.session_state and st.session_state.location_map:
     try:
@@ -440,9 +478,51 @@ if page == "Dashboard":
     if not session:
         with st.expander("Demo data tools"):
             size = st.selectbox("Demo dataset size", [10, 50, 100, 200], index=1)
-            if st.button("🔁 Generate larger demo dataset", key="gen_demo"):
-                st.session_state.demo_df = generate_demo_data(size)
-                st.experimental_rerun()
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                if st.button("🔁 Generate larger demo dataset", key="gen_demo"):
+                    st.session_state.demo_df = generate_demo_data(size)
+                    st.experimental_rerun()
+
+                st.markdown("---")
+                st.write("Quick seed:")
+                if st.button("➕ Add 5 life-saving critical items", key="add_life_saving"):
+                    base = st.session_state.get("demo_df") or generate_demo_data(50)
+                    extra = []
+                    life_items = ["Insulin", "Oxygen", "Blood", "Ventilator"]
+                    for _ in range(5):
+                        item = np.random.choice(life_items)
+                        avg = max(0.5, round(np.random.exponential(2.5), 2))
+                        closing = max(0, int(max(1, avg) * np.random.uniform(0, 3)))
+                        extra.append({
+                            "LOCATION": "District Hospital",
+                            "ITEM": item,
+                            "CLOSING_STOCK": closing,
+                            "AVG_DAILY_DEMAND": avg,
+                            "DAYS_TO_STOCKOUT": round(closing / max(avg, 1), 1),
+                            "STOCK_STATUS": "Critical",
+                            "LEAD_TIME_DAYS": 7
+                        })
+                    new_df = pd.concat([base, pd.DataFrame(extra)], ignore_index=True)
+                    # cast dtypes to avoid pandas type warnings
+                    if "CLOSING_STOCK" in new_df.columns:
+                        new_df["CLOSING_STOCK"] = new_df["CLOSING_STOCK"].astype(int)
+                    if "AVG_DAILY_DEMAND" in new_df.columns:
+                        new_df["AVG_DAILY_DEMAND"] = new_df["AVG_DAILY_DEMAND"].astype(float)
+                    if "DAYS_TO_STOCKOUT" in new_df.columns:
+                        new_df["DAYS_TO_STOCKOUT"] = new_df["DAYS_TO_STOCKOUT"].astype(float)
+                    if "LEAD_TIME_DAYS" in new_df.columns:
+                        new_df["LEAD_TIME_DAYS"] = new_df["LEAD_TIME_DAYS"].astype(int)
+                    st.session_state.demo_df = new_df
+                    st.experimental_rerun()
+
+            with col_b:
+                pct_at_risk = st.slider("% At-risk (Critical/Warning)", 0, 60, 20, step=5)
+                pct_life = st.slider("% Life-saving items", 0, 40, 15, step=5)
+                if st.button("🔬 Generate targeted at-risk demo dataset", key="gen_targeted"):
+                    st.session_state.demo_df = generate_targeted_demo(size, pct_at_risk/100.0, pct_life/100.0)
+                    st.experimental_rerun()
 
     # -------------------------------------------------
     # CORE KPIs (EXECUTIVE VIEW)

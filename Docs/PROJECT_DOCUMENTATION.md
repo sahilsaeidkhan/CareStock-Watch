@@ -142,6 +142,8 @@ CareStock Watch converts simple daily stock data into **early warnings, forecast
 
 “Daily stock data is ingested into Snowflake using Snowpipe / COPY INTO from hospital systems or spreadsheets, with optional API ingestion via external functions for supplier or NGO data.”
 
+“CareStock Watch supports semi-structured data ingestion (JSON/VARIANT) for supplier feeds, expiry metadata, and NGO reports, parsed using Snowflake SQL.”
+
 **Snowflake Platform**
 - Snowflake Tables – Central inventory repository
 - Dynamic Tables – Auto-refresh stock health metrics

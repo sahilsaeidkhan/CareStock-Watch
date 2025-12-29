@@ -75,7 +75,41 @@ footer {visibility: hidden;}
 # =================================================
 @st.cache_resource
 def get_session():
-    return get_active_session()
+    try:
+        # Prefer an active session when running inside Snowpark-managed environments
+        return get_active_session()
+    except Exception:
+        # Attempt to build a session from environment variables (for local dev)
+        import os
+        try:
+            from snowflake.snowpark.session import Session
+        except Exception:
+            Session = None
+
+        cfg = {}
+        for k, env in {
+            "account": "SNOWFLAKE_ACCOUNT",
+            "user": "SNOWFLAKE_USER",
+            "password": "SNOWFLAKE_PASSWORD",
+            "role": "SNOWFLAKE_ROLE",
+            "warehouse": "SNOWFLAKE_WAREHOUSE",
+            "database": "SNOWFLAKE_DATABASE",
+            "schema": "SNOWFLAKE_SCHEMA",
+            "private_key": "SNOWFLAKE_PRIVATE_KEY"
+        }.items():
+            v = os.getenv(env)
+            if v:
+                cfg[k] = v
+
+        if cfg and Session is not None:
+            try:
+                return Session.builder.configs(cfg).create()
+            except Exception as e:
+                st.warning(f"Failed to create Snowflake Session from env vars: {e}")
+
+        # No session available; app should run in local demo mode
+        st.warning("No Snowflake session found. Running in LOCAL demo mode (no Snowflake connection).")
+        return None
 
 session = get_session()
 
@@ -84,6 +118,39 @@ session = get_session()
 # =================================================
 @st.cache_data(ttl=300)
 def load_stock_health():
+    # If no Snowflake session is available, return a small demo dataframe for local testing
+    if session is None:
+        demo = pd.DataFrame([
+            {
+                "LOCATION": "Central Medical Store",
+                "ITEM": "Insulin",
+                "CLOSING_STOCK": 100,
+                "AVG_DAILY_DEMAND": 5,
+                "DAYS_TO_STOCKOUT": 20,
+                "STOCK_STATUS": "Healthy",
+                "LEAD_TIME_DAYS": 7
+            },
+            {
+                "LOCATION": "District Hospital",
+                "ITEM": "Oxygen",
+                "CLOSING_STOCK": 10,
+                "AVG_DAILY_DEMAND": 3,
+                "DAYS_TO_STOCKOUT": 3,
+                "STOCK_STATUS": "Critical",
+                "LEAD_TIME_DAYS": 14
+            },
+            {
+                "LOCATION": "Community Health Centre",
+                "ITEM": "Paracetamol",
+                "CLOSING_STOCK": 500,
+                "AVG_DAILY_DEMAND": 2,
+                "DAYS_TO_STOCKOUT": 250,
+                "STOCK_STATUS": "Healthy",
+                "LEAD_TIME_DAYS": 5
+            }
+        ])
+        return demo
+
     return session.sql("""
         SELECT
             LOCATION,
@@ -128,17 +195,13 @@ if "recipients" not in st.session_state:
 # Location mapping editor
 # -----------------------
 if "location_map" not in st.session_state:
-    # sensible defaults for demo data — override via the editor below
-    st.session_state.location_map = {
-        "A": "Central Medical Store",
-        "B": "District Hospital",
-        "C": "Community Health Centre"
-    }
+    # start with an empty mapping; users can provide mappings via the editor if desired
+    st.session_state.location_map = {}
 
 with st.expander("🔁 Edit location name mappings (optional)"):
     loc_json = json.dumps(st.session_state.location_map, ensure_ascii=False, indent=2)
     user_input = st.text_area(
-        "Provide a JSON object mapping raw LOCATION codes to full names:",
+        "Provide a JSON object mapping raw LOCATION codes to full names (leave as {} to keep raw LOCATION codes):",
         value=loc_json,
         height=160
     )

@@ -161,6 +161,9 @@ CareStock Watch converts simple daily stock data into **early warnings, forecast
 
 **Security & Governance**
 - Role-Based Access Control (RBAC)
+
+"Aggregated, anonymized stock insights can be shared via Snowflake Secure Data Sharing or Marketplace for public health planning."
+
 - Audit-ready design
 - Secure-by-default architecture
 

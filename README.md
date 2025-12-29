@@ -86,6 +86,8 @@ All data, logic, and UI run **securely inside Snowflake**.
 - **Streamlit in Snowflake:** Interactive dashboards & actions  
 - **Security:** Role-based access, no data movement outside Snowflake  
 
+"Aggregated, anonymized stock insights can be shared via Snowflake Secure Data Sharing or Marketplace for public health planning."
+
 *(Refer to architecture diagram in the submission deck)*
 
 ---

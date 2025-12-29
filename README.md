@@ -74,8 +74,13 @@ All data, logic, and UI run **securely inside Snowflake**.
 
 “Daily stock data is ingested into Snowflake using Snowpipe / COPY INTO from hospital systems or spreadsheets, with optional API ingestion via external functions for supplier or NGO data.”
 
+“CareStock Watch supports semi-structured data ingestion (JSON/VARIANT) for supplier feeds, expiry metadata, and NGO reports, parsed using Snowflake SQL.”
+
 - **Snowflake Tables:** Central inventory repository  
 - **Dynamic Tables & SQL Views:** Stock health computation  
+
+“Snowflake Streams & Tasks can be used to trigger automated alerts and refresh Dynamic Tables on a scheduled or event-based basis.”
+
 - **Snowflake Cortex (AI-ready):** Demand forecasting logic  
 - **Snowpark (Python):** Secure execution inside Snowflake  
 - **Streamlit in Snowflake:** Interactive dashboards & actions  

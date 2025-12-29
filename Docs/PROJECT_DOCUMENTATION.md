@@ -147,6 +147,9 @@ CareStock Watch converts simple daily stock data into **early warnings, forecast
 **Snowflake Platform**
 - Snowflake Tables – Central inventory repository
 - Dynamic Tables – Auto-refresh stock health metrics
+
+“Snowflake Streams & Tasks can be used to trigger automated alerts and refresh Dynamic Tables on a scheduled or event-based basis.”
+
 - SQL Views – Transparent business logic
 - Snowpark (Python) – Secure execution inside Snowflake
 - Cortex-ready forecasting logic

@@ -1,18 +1,33 @@
 import streamlit as st
-#from ai_component_additions import cortex_demand_forecast
 import pandas as pd
 from snowflake.snowpark.context import get_active_session
 import plotly.express as px
 from datetime import datetime
 import numpy as np
 
+
+# -------------------------------------------------
+# Snowflake-safe type casting helpers   
+# -------------------------------------------------
+def sf_int(x):
+    try:
+        return int(x)
+    except Exception:
+        return None
+
+def sf_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+ 
 # =================================================
 # INVENTORY OPTIMIZATION (EOQ + SAFETY STOCK)
 # =================================================
 
 def calculate_eoq(avg_daily_demand, ordering_cost=500, holding_cost=50):
     """
-    EOQ calculationa
+    EOQ calculation
     ordering_cost: cost per order (INR)
     holding_cost: annual holding cost per unit (INR)
     """
@@ -57,15 +72,9 @@ footer {visibility: hidden;}
 # =================================================
 # SNOWFLAKE SESSION
 # =================================================
-from snowflake.snowpark.exceptions import SnowparkSessionException
-
 @st.cache_resource
 def get_session():
-    try:
-        return get_active_session()
-    except Exception:
-        # No active Snowpark session found (e.g., local dev without credentials)
-        return None
+    return get_active_session()
 
 session = get_session()
 
@@ -74,39 +83,6 @@ session = get_session()
 # =================================================
 @st.cache_data(ttl=300)
 def load_stock_health():
-    # If Snowflake session is not available, return a small sample dataframe
-    if session is None:
-        data = [
-            {
-                "LOCATION": "Hospital A",
-                "ITEM": "Insulin",
-                "CLOSING_STOCK": 90,
-                "AVG_DAILY_DEMAND": 30,
-                "DAYS_TO_STOCKOUT": 3,
-                "STOCK_STATUS": "Critical",
-                "LEAD_TIME_DAYS": 7
-            },
-            {
-                "LOCATION": "Hospital A",
-                "ITEM": "Paracetamol",
-                "CLOSING_STOCK": 550,
-                "AVG_DAILY_DEMAND": 150,
-                "DAYS_TO_STOCKOUT": 3.7,
-                "STOCK_STATUS": "Healthy",
-                "LEAD_TIME_DAYS": 5
-            },
-            {
-                "LOCATION": "NGO Center",
-                "ITEM": "Oxygen Cylinder",
-                "CLOSING_STOCK": 35,
-                "AVG_DAILY_DEMAND": 15,
-                "DAYS_TO_STOCKOUT": 2.3,
-                "STOCK_STATUS": "Warning",
-                "LEAD_TIME_DAYS": 10
-            }
-        ]
-        return pd.DataFrame(data)
-
     return session.sql("""
         SELECT
             LOCATION,
@@ -120,9 +96,6 @@ def load_stock_health():
     """).to_pandas()
 
 df = load_stock_health()
-
-if session is None:
-    st.info("Running in local mode: no Snowflake session found. Using sample data. Provide Snowflake credentials to enable live data.")
 
 # =================================================
 # SESSION STATE (Settings persistence)
@@ -455,11 +428,23 @@ if page == "Dashboard":
     # -------------------------------------------------
     # QUICK ACTION EXPORT
     # -------------------------------------------------
+    # Ensure CSV is encoded in UTF-8 with BOM for Excel compatibility
+    # and pass bytes to Streamlit to avoid encoding issues with emojis.
+    if risk_df is None or risk_df.empty:
+        csv_bytes = "Location,Item,Item_Priority,Status_Badge,Closing_Stock,Days_To_Stockout\n".encode("utf-8-sig")
+    else:
+        try:
+            csv_bytes = risk_df.to_csv(index=False).encode("utf-8-sig")
+        except Exception:
+            # Fallback to returning a plain UTF-8 string if bytes conversion fails
+            csv_bytes = risk_df.to_csv(index=False)
+
     st.download_button(
-        "⬇️ Download priority action list (CSV)",
-        risk_df.to_csv(index=False),
+        label="⬇️ Download priority action list (CSV)",
+        data=csv_bytes,
         file_name="carestock_priority_actions.csv",
-        mime="text/csv"
+        mime="text/csv; charset=utf-8",
+        key="download_priority_actions"
     )
 
     st.divider()
@@ -479,15 +464,28 @@ if page == "Dashboard":
         # =================================================
     
 # ACTIONS
-# =================================================
 elif page == "Actions":
 
+    # -------------------------------------------------
+    # INIT LOCAL STATE (NO DB WRITE)
+    # -------------------------------------------------
+    if "action_log" not in st.session_state:
+        st.session_state.action_log = []
+
+    if "working_df" not in st.session_state:
+        st.session_state.working_df = df.copy()
+
+    df = st.session_state.working_df
+
+    # -------------------------------------------------
+    # HEADER
+    # -------------------------------------------------
     st.markdown(
         """
-        <h1 style="margin-bottom:0.3rem;">📝 Action Log</h1>
-        <p style="color:#475569; font-size:1rem; max-width:900px;">
-        Record and track actions taken on at-risk items.
-        This ensures accountability, coordination, and avoids duplicate efforts.
+        <h1>📝 Action Center</h1>
+        <p style="color:#475569;">
+        Take real-world actions on inventory items.  
+        Quantities update instantly to simulate live operations.
         </p>
         """,
         unsafe_allow_html=True
@@ -495,128 +493,135 @@ elif page == "Actions":
 
     st.divider()
 
+    # -------------------------------------------------
+    # FILTER AT-RISK ITEMS
+    # -------------------------------------------------
     at_risk = df[df["STOCK_STATUS"].isin(["Critical", "Warning"])]
 
     if at_risk.empty:
-        st.success("No critical or warning items at the moment 🎉")
-    else:
-        st.subheader("🚨 Select an at-risk item")
+        st.success("🎉 No critical or warning items right now.")
+        st.stop()
 
-        selected_index = st.selectbox(
-            "Item requiring action",
-            at_risk.index,
-            format_func=lambda i: (
-                f"{at_risk.loc[i,'LOCATION']} → "
-                f"{at_risk.loc[i,'ITEM']} "
-                f"({at_risk.loc[i,'STATUS_BADGE']})"
-            )
+    selected_index = st.selectbox(
+        "Select item",
+        at_risk.index,
+        format_func=lambda i: (
+            f"{at_risk.loc[i,'LOCATION']} → "
+            f"{at_risk.loc[i,'ITEM']} "
+            f"({at_risk.loc[i,'STATUS_BADGE']})"
         )
+    )
 
-        selected_item = at_risk.loc[selected_index]
+    item = df.loc[selected_index]
 
-        st.divider()
-
-        st.markdown(
-            f"""
-            <div style="
-                background:#F8FAFC;
-                border:1px solid #E2E8F0;
-                border-radius:16px;
-                padding:18px;">
-                <b>📍 Location:</b> {selected_item['LOCATION']}<br>
-                <b>📦 Item:</b> {selected_item['ITEM']}<br>
-                <b>🚦 Status:</b> {selected_item['STATUS_BADGE']}<br>
-                <b>⏳ Days to stock-out:</b> {round(selected_item['DAYS_TO_STOCKOUT'], 1)}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.divider()
-
-        st.subheader("✍️ Log action taken")
-
-        with st.form("action_form"):
-            action_taken = st.selectbox(
-                "Action type",
-                [
-                    "Purchase order raised",
-                    "Transferred from another location",
-                    "Delivered to location",
-                    "NGO / partner support requested",
-                    "Other"
-                ]
-            )
-
-            notes = st.text_area(
-                "Additional notes (optional)",
-                placeholder="Add any useful context for other teams or future reference..."
-            )
-
-            user = st.text_input(
-                "Your name / team",
-                placeholder="e.g. District Hospital Supply Team"
-            )
-
-            submit = st.form_submit_button("💾 Save action")
-
-        if submit:
-            if not user.strip():
-                st.error("Please enter your name or team before saving.")
-            else:
-                session.sql(
-                    """
-                    INSERT INTO ACTION_LOG
-                    (ACTION_TIMESTAMP, LOCATION, ITEM, ACTION_TYPE, NOTES, USER_NAME)
-                    VALUES (CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
-                    """,
-                    params=[
-                        selected_item["LOCATION"],
-                        selected_item["ITEM"],
-                        action_taken,
-                        notes,
-                        user
-                    ]
-                ).collect()
-
-                st.success("Action logged successfully ✅")
+    # -------------------------------------------------
+    # ITEM CONTEXT
+    # -------------------------------------------------
+    st.markdown(
+        f"""
+        <div style="background:#F8FAFC;border:1px solid #E2E8F0;
+        border-radius:14px;padding:16px;">
+        <b>📍 Location:</b> {item['LOCATION']}<br>
+        <b>📦 Item:</b> {item['ITEM']}<br>
+        <b>📊 Current Stock:</b> {int(item['CLOSING_STOCK'])}<br>
+        <b>⏳ Days to Stock-out:</b> {round(item['DAYS_TO_STOCKOUT'],1)}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.divider()
 
-    st.subheader("📜 Recent actions")
-
-    try:
-        actions_df = session.sql(
-            """
-            SELECT
-                ACTION_TIMESTAMP,
-                LOCATION,
-                ITEM,
-                ACTION_TYPE,
-                NOTES,
-                USER_NAME
-            FROM ACTION_LOG
-            ORDER BY ACTION_TIMESTAMP DESC
-            LIMIT 20
-            """
-        ).to_pandas()
-
-        if actions_df.empty:
-            st.info("No actions recorded yet.")
-        else:
-            st.dataframe(actions_df, use_container_width=True)
-
-    except Exception:
-        st.info(
-            "Action log table not found. "
-            "Create ACTION_LOG table to enable this feature."
+    # -------------------------------------------------
+    # ACTION FORM
+    # -------------------------------------------------
+    with st.form("action_form"):
+        action_type = st.selectbox(
+            "Action type",
+            [
+                "Received stock",
+                "Transferred from another location",
+                "Emergency delivery",
+                "NGO / partner support",
+                "Manual adjustment"
+            ]
         )
 
+        quantity = st.number_input(
+            "Quantity (units)",
+            min_value=1,
+            step=1,
+            help="Example: 5 bandages received"
+        )
+
+        user = st.text_input(
+            "Your name / team",
+            placeholder="e.g. Central Medical Store"
+        )
+
+        submit = st.form_submit_button("✅ Apply action")
+
+    # -------------------------------------------------
+    # APPLY FAKE UPDATE (REAL FEEL)
+    # -------------------------------------------------
+    if submit:
+        if not user.strip():
+            st.error("Please enter your name or team.")
+        else:
+            # Update stock
+            df.loc[selected_index, "CLOSING_STOCK"] += quantity
+
+            # Recalculate days to stockout
+            avg_demand = max(item["AVG_DAILY_DEMAND"], 1)
+            new_days = df.loc[selected_index, "CLOSING_STOCK"] / avg_demand
+            df.loc[selected_index, "DAYS_TO_STOCKOUT"] = round(new_days, 1)
+
+            # Update status automatically
+            if new_days > 15:
+                df.loc[selected_index, "STOCK_STATUS"] = "Healthy"
+                df.loc[selected_index, "STATUS_BADGE"] = "🟢 Healthy"
+            elif new_days > 5:
+                df.loc[selected_index, "STOCK_STATUS"] = "Warning"
+                df.loc[selected_index, "STATUS_BADGE"] = "🟡 Warning"
+            else:
+                df.loc[selected_index, "STOCK_STATUS"] = "Critical"
+                df.loc[selected_index, "STATUS_BADGE"] = "🔴 Critical"
+
+            # Persist changes
+            st.session_state.working_df = df
+
+            # Log action
+            st.session_state.action_log.insert(0, {
+                "Time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "Location": item["LOCATION"],
+                "Item": item["ITEM"],
+                "Action": action_type,
+                "Quantity": f"+{quantity}",
+                "User": user
+            })
+
+            st.success(f"✅ {quantity} units added successfully")
+
+    st.divider()
+
+    # -------------------------------------------------
+    # RECENT ACTIONS
+    # -------------------------------------------------
+    st.subheader("📜 Recent actions")
+
+    if st.session_state.action_log:
+        st.dataframe(
+            pd.DataFrame(st.session_state.action_log),
+            use_container_width=True
+        )
+    else:
+        st.info("No actions recorded yet.")
+
     st.info(
-        "ℹ️ **Why this matters**  \n"
-        "Action logging keeps humans in control, improves coordination, "
-        "and creates an audit trail for critical supply decisions."
+        "ℹ️ Demo mode: updates are simulated. "
+        "Production version writes to Snowflake using Snowpark."
     )
+
 
 
 # =================================================
